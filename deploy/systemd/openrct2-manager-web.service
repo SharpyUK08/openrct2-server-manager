@@ -1,0 +1,29 @@
+[Unit]
+Description=OpenRCT2 Server Manager web portal and local game bridge
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=openrct2-manager
+Group=openrct2-manager
+EnvironmentFile=/etc/openrct2-manager/manager.env
+WorkingDirectory=/opt/openrct2-manager
+ExecStart=/opt/openrct2-manager/venv/bin/uvicorn openrct2_manager.web:app --host 127.0.0.1 --port 8080 --workers 1 --limit-concurrency 64 --backlog 128 --timeout-keep-alive 5 --timeout-graceful-shutdown 30 --limit-max-requests 10000
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=45
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/openrct2-manager /var/log/openrct2-manager
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+MemoryDenyWriteExecute=true
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target
+

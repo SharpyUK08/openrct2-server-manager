@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ ${EUID} -ne 0 || $# -ne 1 ]]; then
+  echo "Usage: sudo openrct2-manager-enable-https parks.example.com" >&2
+  exit 2
+fi
+domain=${1,,}
+if [[ ! $domain =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?\.[a-z]{2,63}$ ]]; then
+  echo "Enter a hostname such as parks.example.com, without https:// or a path." >&2
+  exit 2
+fi
+if ! getent ahostsv4 "$domain" >/dev/null; then
+  echo "DNS does not resolve yet. Create the A record, wait for it to propagate, then retry." >&2
+  exit 1
+fi
+if [[ -s /etc/caddy/Caddyfile ]] && ! grep -q '^# Managed by OpenRCT2 Manager$' /etc/caddy/Caddyfile; then
+  echo "An unmanaged Caddy configuration exists; refusing to overwrite it." >&2
+  exit 1
+fi
+. /etc/openrct2-manager/server.env
+
+if ! command -v caddy >/dev/null 2>&1; then
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y --no-install-recommends debian-keyring debian-archive-keyring apt-transport-https curl gpg
+  curl -1fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key | \
+    gpg --batch --yes --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  curl -1fsSL https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt \
+    -o /etc/apt/sources.list.d/caddy-stable.list
+  chmod 0644 /usr/share/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/sources.list.d/caddy-stable.list
+  apt-get update
+  apt-get install -y --no-install-recommends caddy
+fi
+
+cat > /etc/caddy/Caddyfile <<EOF
+# Managed by OpenRCT2 Manager
+${domain} {
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:${WEB_PORT}
+}
+EOF
+caddy validate --config /etc/caddy/Caddyfile >/dev/null
+sed -i -E "s/^MANAGER_DOMAIN=.*/MANAGER_DOMAIN=${domain}/; s/^WEB_BIND=.*/WEB_BIND=127.0.0.1/" /etc/openrct2-manager/server.env
+systemctl enable --now caddy.service >/dev/null
+systemctl reload caddy.service
+systemctl restart openrct2-manager.service
+echo "HTTPS provisioning started for https://${domain}/"
+echo "Caddy obtains the certificate automatically. Ensure public TCP 80 and 443 are open."

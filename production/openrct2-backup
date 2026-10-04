@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+. /etc/openrct2-manager/server.env
+BACKUP_DIR=/var/lib/openrct2/backups
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
+archive="$BACKUP_DIR/openrct2-$stamp.tar.gz"
+stage=$(mktemp -d "$BACKUP_DIR/.archive-stage.XXXXXX")
+was_active=false
+
+cleanup() {
+  rm -rf -- "$stage"
+  if [[ $was_active == true ]] && ! systemctl is-active --quiet openrct2.service; then
+    systemctl start openrct2.service
+  fi
+}
+trap cleanup EXIT
+
+if systemctl is-active --quiet openrct2.service; then
+  was_active=true
+  systemctl stop openrct2.service
+fi
+
+install -d -m 0750 "$stage/ServerData" "$stage/manager-state" "$stage/scenarios" "$stage/scenario-archive" "$stage/host-config"
+for source in save autosave plugin; do
+  [[ -e /var/lib/openrct2/user-data/$source ]] && cp -a -- "/var/lib/openrct2/user-data/$source" "$stage/ServerData/$source"
+done
+for source in groups.json users.json config.ini plugin.store.json; do
+  [[ -e /var/lib/openrct2/user-data/$source ]] && cp -a -- "/var/lib/openrct2/user-data/$source" "$stage/ServerData/$source"
+done
+cp -a -- /var/lib/openrct2/scenarios/. "$stage/scenarios/"
+[[ -d /var/lib/openrct2/scenario-archive ]] && cp -a -- /var/lib/openrct2/scenario-archive/. "$stage/scenario-archive/"
+# SQLite databases must not be copied while the manager worker may be writing.
+# Copy atomic JSON state normally and snapshot the durable queue with SQLite's
+# online backup API below.
+find /var/lib/openrct2-manager -maxdepth 1 -type f ! -name 'jobs.sqlite3*' -exec cp -a -- {} "$stage/manager-state/" \;
+if [[ -f /var/lib/openrct2-manager/jobs.sqlite3 ]]; then
+  SOURCE_DB=/var/lib/openrct2-manager/jobs.sqlite3 TARGET_DB="$stage/manager-state/jobs.sqlite3" /usr/bin/python3 - <<'PY'
+import os, sqlite3
+source = sqlite3.connect(f"file:{os.environ['SOURCE_DB']}?mode=ro", uri=True)
+target = sqlite3.connect(os.environ['TARGET_DB'])
+with target: source.backup(target)
+target.close(); source.close()
+PY
+fi
+cp -a -- /etc/openrct2-manager/server.env "$stage/host-config/server.env"
+
+STAGE_ROOT=$stage ARCHIVE_NAME=$(basename -- "$archive") /usr/bin/python3 - <<'PY'
+import hashlib, json, os
+from datetime import datetime, timezone
+from pathlib import Path
+
+root = Path(os.environ['STAGE_ROOT'])
+files = []
+for path in sorted(item for item in root.rglob('*') if item.is_file() and item.name != 'manifest.json'):
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            digest.update(chunk)
+    files.append({'path': path.relative_to(root).as_posix(), 'size': path.stat().st_size,
+                  'sha256': digest.hexdigest()})
+manifest = {'schema': 1, 'created_at': datetime.now(timezone.utc).isoformat(),
+            'archive': os.environ['ARCHIVE_NAME'], 'files': files,
+            'secret_policy': 'Portal password hashes are included; transport credentials and SFTP private keys are excluded.'}
+(root / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+PY
+
+/usr/bin/tar --create --gzip --file "$archive.uploading" --directory "$stage" .
+chmod 0640 "$archive.uploading"
+mv -- "$archive.uploading" "$archive"
+
+mapfile -t old_backups < <(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'openrct2-*.tar.gz' -printf '%T@ %p\n' | sort -rn | tail -n "+$((BACKUP_RETENTION + 1))" | cut -d' ' -f2-)
+if ((${#old_backups[@]})); then rm -f -- "${old_backups[@]}"; fi
+printf '%s\n' "$archive"

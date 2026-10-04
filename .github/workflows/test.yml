@@ -1,0 +1,28 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate shell scripts
+        run: >-
+          bash -n outputs/install-openrct2-manager.sh
+          production/openrct2-backup
+          production/openrct2-manager-enable-https
+          production/openrct2-restore-backup
+      - name: Run Python tests
+        run: python -m unittest discover -s tests -v
+      - name: Run plugin tests
+        run: node tests/test_helper.js

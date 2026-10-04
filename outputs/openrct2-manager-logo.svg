@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">OpenRCT2 Server Manager</title>
+  <desc id="desc">An original coaster track crest with two peaks and a small car.</desc>
+  <rect width="64" height="64" rx="15" fill="#14263d"/>
+  <path d="M8 45h48" fill="none" stroke="#7de1c7" stroke-width="4" stroke-linecap="round"/>
+  <path d="M8 40c8 0 9-17 17-17s10 17 17 17 7-14 14-14" fill="none" stroke="#7de1c7" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M11 51h42" fill="none" stroke="#487b8b" stroke-width="2" stroke-linecap="round" stroke-dasharray="3 4"/>
+  <rect x="18" y="18" width="12" height="6" rx="2" fill="#ffb66d"/>
+  <circle cx="21" cy="26" r="2" fill="#ffb66d"/>
+  <circle cx="27" cy="26" r="2" fill="#ffb66d"/>
+</svg>

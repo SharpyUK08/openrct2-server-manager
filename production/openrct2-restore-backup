@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Validate or restore a complete manager archive. Apply is intentionally local,
+# explicit, and creates a rollback archive before changing live data.
+set -Eeuo pipefail
+
+usage() { echo "Usage: openrct2-restore-backup --dry-run ARCHIVE | --apply --confirm APPLY ARCHIVE" >&2; exit 2; }
+mode=${1:-}; shift || true
+confirm=
+if [[ $mode == --apply && ${1:-} == --confirm ]]; then confirm=${2:-}; shift 2 || true; fi
+archive=${1:-}
+[[ -n $archive && $# -eq 1 && -f $archive ]] || usage
+/usr/local/sbin/openrct2-verify-backup "$archive"
+
+if [[ $mode == --dry-run ]]; then
+  /usr/bin/python3 - "$archive" <<'PY'
+import json, sys, tarfile
+with tarfile.open(sys.argv[1], 'r:gz') as source:
+    member = next(item for item in source.getmembers() if item.name.removeprefix('./') == 'manifest.json')
+    manifest = json.load(source.extractfile(member))
+print(f"Restore dry-run passed: {len(manifest['files'])} files; created {manifest.get('created_at', 'unknown')}")
+PY
+  exit 0
+fi
+[[ $mode == --apply && $confirm == APPLY && ${EUID} -eq 0 ]] || usage
+
+rollback=$(/usr/local/sbin/openrct2-backup)
+stage=$(mktemp -d /var/lib/openrct2/backups/.restore-stage.XXXXXX)
+cleanup() {
+  rm -rf -- "$stage"
+  systemctl start openrct2-manager.service >/dev/null 2>&1 || true
+  systemctl start openrct2.service >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+systemctl stop openrct2.service openrct2-manager.service
+/usr/bin/tar --extract --gzip --file "$archive" --directory "$stage" --no-same-owner --no-same-permissions
+
+for pair in \
+  "ServerData:/var/lib/openrct2/user-data" \
+  "scenarios:/var/lib/openrct2/scenarios" \
+  "scenario-archive:/var/lib/openrct2/scenario-archive" \
+  "manager-state:/var/lib/openrct2-manager"; do
+  source=${pair%%:*}; destination=${pair#*:}
+  [[ -d $stage/$source ]] || continue
+  install -d -o openrct2 -g openrct2 -m 0750 "$destination"
+  cp -a -- "$stage/$source/." "$destination/"
+done
+chown -R openrct2:openrct2 /var/lib/openrct2/user-data /var/lib/openrct2/scenarios \
+  /var/lib/openrct2/scenario-archive /var/lib/openrct2-manager
+runuser -u openrct2 -- /usr/bin/python3 /usr/local/lib/openrct2-manager.py --setup
+systemctl start openrct2-manager.service openrct2.service
+trap - EXIT
+rm -rf -- "$stage"
+printf 'Restore complete. Pre-restore rollback archive: %s\n' "$rollback"
