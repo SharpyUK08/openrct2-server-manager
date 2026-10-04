@@ -25,6 +25,10 @@ server on Ubuntu. The current standalone v3 installer is
 
 ## Install or upgrade
 
+New to server administration? Follow the
+[`Beginner installation guide`](docs/INSTALLATION.md) for AWS Lightsail, EC2,
+other cloud providers and home-router port forwarding.
+
 Requirements are Ubuntu Server 22.04/24.04, systemd, sudo and a compatible park.
 OpenRCT2 does not need to be installed first: the installer detects an existing
 v0.5.5+ executable and, when none is found, installs the release build from the
@@ -50,6 +54,16 @@ less install-openrct2-manager.sh
 sudo bash install-openrct2-manager.sh
 ```
 
+For a beginner-friendly installation, the complete download and installation
+can be pasted as one command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SharpyUK08/openrct2-server-manager/main/outputs/install-openrct2-manager.sh -o /tmp/openrct2-manager-install.sh && sudo bash /tmp/openrct2-manager-install.sh
+```
+
+This executes code as root; the two-step version above is preferable when the
+operator knows how to inspect a script.
+
 The installer is idempotent and preserves an existing game configuration,
 credential file and live park selection. On a fresh installation it prints a
 one-time setup password. Open the manager through its HTTPS address or the SSH
@@ -68,7 +82,8 @@ localhost unless `ALLOW_HTTP_REMOTE=true` is deliberately supplied.
 `AUTO_INSTALL_OPENRCT2=false` makes a missing executable a hard error instead;
 `OPENRCT2_INSTALL_CHANNEL=nightly` opts into the upstream nightly PPA. Release
 is the default and recommended channel. A custom executable can be selected with
-an absolute `OPENRCT2_BIN` path.
+an absolute `OPENRCT2_BIN` path. `PUBLIC_ADDRESS` can override automatic public
+IPv4 detection when a provider uses unusual networking.
 
 The final setup screen can prepare a domain without giving the manager access
 to a DNS or cloud account. First create an A/AAAA record for the server and open

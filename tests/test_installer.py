@@ -52,6 +52,14 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("tar -tzf", self.source)
         self.assertIn("The OpenRCT2 archive contains an unsafe path", self.source)
 
+    def test_public_address_and_beginner_firewall_guidance(self):
+        self.assertIn("latest/meta-data/public-ipv4", self.source)
+        self.assertIn('advertise_address = "$(ini_escape "$PUBLIC_ADDRESS")"', self.source)
+        self.assertIn("AWS Lightsail: instance > Networking > IPv4 Firewall", self.source)
+        self.assertIn("Home server: forward TCP", self.source)
+        self.assertIn("Never expose TCP ${CONTROL_PORT}", self.source)
+        self.assertIn("ssh -L ${WEB_PORT}:127.0.0.1:${WEB_PORT} ubuntu@${host}", self.source)
+
 
 if __name__ == "__main__":
     unittest.main()

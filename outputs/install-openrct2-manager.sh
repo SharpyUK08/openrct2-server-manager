@@ -23,6 +23,7 @@ set -Eeuo pipefail
 #   RCT2_DATA_PATH=/path/to/legal/RCT2/files # usually unnecessary for .park saves
 #   AUTO_INSTALL_OPENRCT2=true              # install from the official PPA when absent
 #   OPENRCT2_INSTALL_CHANNEL=release         # release or nightly
+#   PUBLIC_ADDRESS=203.0.113.10              # auto-detected when omitted
 #
 # Run with: sudo -E bash install-openrct2-manager.sh
 # Upgrades leave an already-running game untouched. Restart it when safe to
@@ -46,7 +47,7 @@ fi
 existing_server_env=false
 [[ -r /etc/openrct2-manager/server.env ]] && existing_server_env=true
 declare -A requested_values=()
-for setting_name in OPENRCT2_BIN WEB_PORT WEB_BIND GAME_PORT RCT2_DATA_PATH BACKUP_RETENTION MAX_UPLOAD_MB MANAGER_DOMAIN CONTROL_PORT; do
+for setting_name in OPENRCT2_BIN WEB_PORT WEB_BIND GAME_PORT RCT2_DATA_PATH BACKUP_RETENTION MAX_UPLOAD_MB MANAGER_DOMAIN CONTROL_PORT PUBLIC_ADDRESS; do
   if declare -p "$setting_name" >/dev/null 2>&1; then
     requested_values[$setting_name]=${!setting_name}
   fi
@@ -78,6 +79,7 @@ CONTROL_PORT=${CONTROL_PORT:-11754}
 ALLOW_HTTP_REMOTE=${ALLOW_HTTP_REMOTE:-false}
 AUTO_INSTALL_OPENRCT2=${AUTO_INSTALL_OPENRCT2:-true}
 OPENRCT2_INSTALL_CHANNEL=${OPENRCT2_INSTALL_CHANNEL:-release}
+PUBLIC_ADDRESS=${PUBLIC_ADDRESS:-}
 if [[ -n $MANAGER_DOMAIN ]]; then
   WEB_BIND=127.0.0.1
 elif [[ -z ${WEB_BIND:-} ]]; then
@@ -91,6 +93,14 @@ fi
 is_port() { [[ $1 =~ ^[0-9]+$ ]] && (( $1 >= 1 && $1 <= 65535 )); }
 is_uint() { [[ $1 =~ ^[0-9]+$ ]] && (( $1 >= 1 )); }
 is_bool() { [[ $1 == true || $1 == false ]]; }
+is_ipv4() {
+  local value=$1 octet
+  [[ $value =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  local IFS=.; read -r -a octets <<< "$value"
+  for octet in "${octets[@]}"; do
+    [[ $octet =~ ^[0-9]+$ ]] && (( 10#$octet <= 255 )) || return 1
+  done
+}
 
 is_port "$WEB_PORT" || { echo "WEB_PORT must be 1-65535." >&2; exit 1; }
 is_port "$GAME_PORT" || { echo "GAME_PORT must be 1-65535." >&2; exit 1; }
@@ -119,6 +129,7 @@ is_bool "$AUTO_INSTALL_OPENRCT2" || { echo "AUTO_INSTALL_OPENRCT2 must be true o
 }
 [[ $WEB_BIND == 127.0.0.1 || $WEB_BIND == 0.0.0.0 ]] || { echo "WEB_BIND must be 127.0.0.1 or 0.0.0.0." >&2; exit 1; }
 [[ $WEB_USER =~ ^[A-Za-z0-9_.-]{1,64}$ ]] || { echo "WEB_USER contains unsupported characters." >&2; exit 1; }
+[[ -z $PUBLIC_ADDRESS ]] || is_ipv4 "$PUBLIC_ADDRESS" || { echo "PUBLIC_ADDRESS must be a valid IPv4 address." >&2; exit 1; }
 
 generated_password=false
 existing_password=false
@@ -135,6 +146,29 @@ echo "Installing operating-system packages and checking OpenRCT2..."
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends ca-certificates curl openssl python3 software-properties-common sudo
+
+CLOUD_PROVIDER='Cloud/VPS provider'
+detect_public_ipv4() {
+  local token candidate
+  if [[ -n $PUBLIC_ADDRESS ]]; then return 0; fi
+  token=$(curl --noproxy '*' -fsS --max-time 2 -X PUT \
+    -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' \
+    http://169.254.169.254/latest/api/token 2>/dev/null || true)
+  if [[ -n $token ]]; then
+    candidate=$(curl --noproxy '*' -fsS --max-time 2 \
+      -H "X-aws-ec2-metadata-token: $token" \
+      http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || true)
+    if is_ipv4 "$candidate"; then PUBLIC_ADDRESS=$candidate; CLOUD_PROVIDER='Amazon Web Services'; return 0; fi
+  fi
+  candidate=$(curl -fsS --max-time 3 https://checkip.amazonaws.com 2>/dev/null | tr -d '[:space:]' || true)
+  if is_ipv4 "$candidate"; then PUBLIC_ADDRESS=$candidate; return 0; fi
+  return 1
+}
+if detect_public_ipv4; then
+  echo "Detected public server address: ${PUBLIC_ADDRESS} (${CLOUD_PROVIDER})."
+else
+  echo "Public IPv4 could not be detected. You can enter it later in Server settings."
+fi
 if [[ -z ${WEB_PASSWORD:-} ]]; then
   WEB_PASSWORD=$(openssl rand -base64 24 | tr -d '\n')
   generated_password=true
@@ -334,11 +368,39 @@ default_port = ${GAME_PORT}
 server_name = "$(ini_escape "$SERVER_NAME")"
 default_password = "$(ini_escape "$GAME_PASSWORD")"
 advertise = ${ADVERTISE}
+advertise_address = "$(ini_escape "$PUBLIC_ADDRESS")"
 pause_server_if_no_clients = ${PAUSE_WHEN_EMPTY}
 maxplayers = ${MAX_PLAYERS}
 EOF
 chown openrct2:openrct2 /var/lib/openrct2/user-data/config.ini
 chmod 0640 /var/lib/openrct2/user-data/config.ini
+fi
+
+# Preserve an operator's existing address, but repair a blank/missing value left
+# by an interrupted fresh installation.
+if [[ -n $PUBLIC_ADDRESS ]]; then
+  python3 - /var/lib/openrct2/user-data/config.ini "$PUBLIC_ADDRESS" <<'PYADDRESS'
+import os, re, sys, tempfile
+path, address = sys.argv[1:]
+lines = open(path, encoding='utf-8').read().splitlines()
+start = next((i for i, line in enumerate(lines) if line.strip().lower() == '[network]'), None)
+if start is not None:
+    end = next((i for i in range(start + 1, len(lines)) if re.fullmatch(r'\s*\[[^]]+\]\s*', lines[i])), len(lines))
+    match = next((i for i in range(start + 1, end) if re.match(r'\s*advertise_address\s*=', lines[i], re.I)), None)
+    if match is None:
+        lines.insert(start + 1, f'advertise_address = "{address}"')
+    elif lines[match].split('=', 1)[1].strip() in ('', '""'):
+        lines[match] = f'advertise_address = "{address}"'
+    else:
+        raise SystemExit(0)
+    fd, temporary = tempfile.mkstemp(prefix='.config.', dir=os.path.dirname(path), text=True)
+    with os.fdopen(fd, 'w', encoding='utf-8') as handle:
+        handle.write('\n'.join(lines) + '\n')
+        handle.flush(); os.fsync(handle.fileno())
+    os.replace(temporary, path)
+PYADDRESS
+  chown openrct2:openrct2 /var/lib/openrct2/user-data/config.ini
+  chmod 0640 /var/lib/openrct2/user-data/config.ini
 fi
 
 {
@@ -4063,8 +4125,7 @@ if systemctl is-active --quiet openrct2.service; then
   echo "Game service left running. Restart it from the panel when safe to activate player tracking, blocking, and snapshots."
 fi
 
-public_ip=$(curl -fsS --max-time 3 https://checkip.amazonaws.com 2>/dev/null || true)
-host=${public_ip:-SERVER_PUBLIC_IP}
+host=${PUBLIC_ADDRESS:-SERVER_PUBLIC_IP}
 if [[ -n $MANAGER_DOMAIN ]]; then
   web_url="https://${MANAGER_DOMAIN}/"
 elif [[ $WEB_BIND == 127.0.0.1 ]]; then
@@ -4075,19 +4136,37 @@ fi
 
 cat <<EOF
 
-OpenRCT2 Manager is installed.
+============================================================
+ OpenRCT2 Server Manager is ready
+============================================================
 
-Web panel:  ${web_url}
-Username:   ${WEB_USER}
-Game port:  ${GAME_PORT}/TCP
+Server address: ${host}
+Game address:   ${host}:${GAME_PORT}
+Web setup:      ${web_url}
 
-AWS security-group rules to add:
-  - TCP ${GAME_PORT} from the players who should connect.
-  - Never open TCP ${CONTROL_PORT}; the chat bridge listens on localhost only.
+NEXT STEP 1 - Allow players through your firewall
+  Cloud server (${CLOUD_PROVIDER}): open inbound TCP ${GAME_PORT} in the
+  provider firewall/security group. Do not open UDP for OpenRCT2.
+EOF
+if [[ $CLOUD_PROVIDER == 'Amazon Web Services' ]]; then
+  cat <<EOF
+  AWS Lightsail: instance > Networking > IPv4 Firewall > Add rule >
+  Custom, TCP, port ${GAME_PORT}. Restrict source addresses when practical.
+  AWS EC2: add the same TCP port to the instance security group's inbound rules.
+EOF
+else
+  cat <<EOF
+  Other VPS: look for Firewall, Network, Security Group or Inbound Rules.
+  Home server: forward TCP ${GAME_PORT} on your router to this machine's private
+  LAN address, and allow TCP ${GAME_PORT} in the machine's own firewall.
+EOF
+fi
+cat <<EOF
 
-Upload one or more .park, .sv6, or .sc6 files, then choose one to launch.
-OpenRCT2 clients must use a compatible network version.
+  Never expose TCP ${CONTROL_PORT}; it is a localhost-only control bridge.
+  Keep TCP ${WEB_PORT} private unless it is protected by HTTPS.
 
+NEXT STEP 2 - Open the web setup
 EOF
 if [[ -n $MANAGER_DOMAIN ]]; then
   echo "  - Open TCP 80 and 443 for HTTPS certificate issuance and web access."
@@ -4095,8 +4174,10 @@ if [[ -n $MANAGER_DOMAIN ]]; then
   echo "  - Point the DNS A/AAAA record for ${MANAGER_DOMAIN} at this server."
 else
   if [[ $WEB_BIND == 127.0.0.1 ]]; then
-    echo "  - Keep TCP ${WEB_PORT} closed externally. Use an SSH tunnel or set MANAGER_DOMAIN for HTTPS."
-    echo "  - Example tunnel: ssh -L ${WEB_PORT}:127.0.0.1:${WEB_PORT} ubuntu@${host}"
+    echo "  On your own computer, run:"
+    echo "    ssh -L ${WEB_PORT}:127.0.0.1:${WEB_PORT} ubuntu@${host}"
+    echo "  Keep that window open, then visit http://127.0.0.1:${WEB_PORT}/"
+    echo "  Later, the browser guide can help you add a domain and HTTPS."
   else
     echo "  - Open TCP ${WEB_PORT} from YOUR IP ONLY (never from 0.0.0.0/0)."
     echo "  - HTTP Basic authentication is not encrypted without HTTPS; use a domain with MANAGER_DOMAIN or an SSH tunnel."
@@ -4104,9 +4185,12 @@ else
 fi
 
 if [[ $existing_server_env == false ]]; then
-  echo "One-time setup password: ${WEB_PASSWORD}"
-  echo "Open the manager in your browser and use this password to create the first Owner account."
-  echo "The setup password is invalidated after the browser guide finishes."
+  echo
+  echo "NEXT STEP 3 - Create the first Owner"
+  echo "  Suggested username: ${WEB_USER}"
+  echo "  One-time setup password: ${WEB_PASSWORD}"
+  echo "  Enter it in the browser guide and choose your permanent portal password."
+  echo "  This one-time password stops working as soon as setup finishes."
 elif [[ $generated_password == true || $existing_password == false ]]; then
   echo "Initial portal password: ${WEB_PASSWORD}"
   echo "Save this password now; it is stored in /etc/openrct2-manager/web-credentials."
