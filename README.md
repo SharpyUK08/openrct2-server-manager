@@ -66,8 +66,9 @@ operator knows how to inspect a script.
 
 The installer is idempotent and preserves an existing game configuration,
 credential file and live park selection. On a fresh installation it prints a
-one-time setup password. Open the manager through its HTTPS address or the SSH
-tunnel shown by the installer; the browser guide then verifies the detected
+one-time setup password and the direct setup URL, such as
+`http://203.0.113.10:8080/setup`. After TCP 8080 is allowed in the provider
+firewall, the browser guide verifies the detected
 OpenRCT2 executable, creates the first Owner, and configures the server name,
 capacity, description, MOTD, discovery and pause-on-empty behaviour. The setup
 password is stored only as a PBKDF2 hash and is permanently consumed when the
@@ -77,8 +78,9 @@ suggested Owner name and one-time password. Existing upgrades keep their users.
 Important optional variables are `GAME_PORT` (11753), `WEB_PORT` (8080),
 `CONTROL_PORT` (11754), `MAX_UPLOAD_MB` (64), `BACKUP_RETENTION` (14),
 `SERVER_NAME`, `GAME_PASSWORD`, `ADVERTISE`, `PAUSE_WHEN_EMPTY`, `MAX_PLAYERS`
-and `RCT2_DATA_PATH`. A new install without `MANAGER_DOMAIN` binds the portal to
-localhost unless `ALLOW_HTTP_REMOTE=true` is deliberately supplied.
+and `RCT2_DATA_PATH`. A new install without `MANAGER_DOMAIN` exposes the
+password-protected first-run portal on TCP 8080 so a beginner can open it by IP.
+Set `ALLOW_HTTP_REMOTE=false` to require an SSH tunnel instead.
 `AUTO_INSTALL_OPENRCT2=false` makes a missing executable a hard error instead;
 `OPENRCT2_INSTALL_CHANNEL=nightly` opts into the upstream nightly PPA. Release
 is the default and recommended channel. A custom executable can be selected with

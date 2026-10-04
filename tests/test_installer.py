@@ -58,6 +58,9 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("AWS Lightsail: instance > Networking > IPv4 Firewall", self.source)
         self.assertIn("Home server: forward TCP", self.source)
         self.assertIn("Never expose TCP ${CONTROL_PORT}", self.source)
+        self.assertIn("ALLOW_HTTP_REMOTE=${ALLOW_HTTP_REMOTE:-true}", self.source)
+        self.assertIn("http://${host}:${WEB_PORT}/setup", self.source)
+        self.assertIn("Add a second Custom TCP rule for port ${WEB_PORT}", self.source)
         self.assertIn("ssh -L ${WEB_PORT}:127.0.0.1:${WEB_PORT} ubuntu@${host}", self.source)
 
     def test_repeated_incomplete_install_reissues_one_time_password(self):

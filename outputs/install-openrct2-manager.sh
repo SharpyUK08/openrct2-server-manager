@@ -11,7 +11,7 @@ set -Eeuo pipefail
 #   WEB_PORT=8080
 #   MANAGER_DOMAIN=parks.example.com          # enables HTTPS via Caddy
 #   CONTROL_PORT=11754                      # local-only chat bridge
-#   ALLOW_HTTP_REMOTE=true                   # opt in to remote HTTP without TLS
+#   ALLOW_HTTP_REMOTE=false                  # opt out of browser setup over public HTTP
 #   GAME_PORT=11753
 #   SERVER_NAME='My OpenRCT2 Server'
 #   GAME_PASSWORD=''                       # blank allows passwordless joining
@@ -76,7 +76,7 @@ BACKUP_RETENTION=${BACKUP_RETENTION:-14}
 RCT2_DATA_PATH=${RCT2_DATA_PATH:-}
 MANAGER_DOMAIN=${MANAGER_DOMAIN:-}
 CONTROL_PORT=${CONTROL_PORT:-11754}
-ALLOW_HTTP_REMOTE=${ALLOW_HTTP_REMOTE:-false}
+ALLOW_HTTP_REMOTE=${ALLOW_HTTP_REMOTE:-true}
 AUTO_INSTALL_OPENRCT2=${AUTO_INSTALL_OPENRCT2:-true}
 OPENRCT2_INSTALL_CHANNEL=${OPENRCT2_INSTALL_CHANNEL:-release}
 PUBLIC_ADDRESS=${PUBLIC_ADDRESS:-}
@@ -4159,27 +4159,28 @@ Server address: ${host}
 Game address:   ${host}:${GAME_PORT}
 Web setup:      ${web_url}
 
-NEXT STEP 1 - Allow players through your firewall
-  Cloud server (${CLOUD_PROVIDER}): open inbound TCP ${GAME_PORT} in the
-  provider firewall/security group. Do not open UDP for OpenRCT2.
+NEXT STEP 1 - Open the two required firewall ports
+  Cloud server (${CLOUD_PROVIDER}): open inbound TCP ${GAME_PORT} for the game
+  and TCP ${WEB_PORT} for first-time web setup. Do not open UDP for OpenRCT2.
 EOF
 if [[ $CLOUD_PROVIDER == 'Amazon Web Services' ]]; then
   cat <<EOF
   AWS Lightsail: instance > Networking > IPv4 Firewall > Add rule >
-  Custom, TCP, port ${GAME_PORT}. Restrict source addresses when practical.
-  AWS EC2: add the same TCP port to the instance security group's inbound rules.
+  Custom, TCP, port ${GAME_PORT}. Add a second Custom TCP rule for port ${WEB_PORT}.
+  AWS EC2: add both TCP ports to the instance security group's inbound rules.
 EOF
 else
   cat <<EOF
   Other VPS: look for Firewall, Network, Security Group or Inbound Rules.
-  Home server: forward TCP ${GAME_PORT} on your router to this machine's private
-  LAN address, and allow TCP ${GAME_PORT} in the machine's own firewall.
+  Home server: forward TCP ${GAME_PORT} and ${WEB_PORT} on your router to this
+  machine's private LAN address, and allow both TCP ports in its own firewall.
 EOF
 fi
 cat <<EOF
 
   Never expose TCP ${CONTROL_PORT}; it is a localhost-only control bridge.
-  Keep TCP ${WEB_PORT} private unless it is protected by HTTPS.
+  HTTP does not encrypt passwords. Complete setup promptly, then use the
+  built-in Domain and HTTPS guide before sharing the manager with other people.
 
 NEXT STEP 2 - Open the web setup
 EOF
@@ -4194,8 +4195,11 @@ else
     echo "  Keep that window open, then visit http://127.0.0.1:${WEB_PORT}/"
     echo "  Later, the browser guide can help you add a domain and HTTPS."
   else
-    echo "  - Open TCP ${WEB_PORT} from YOUR IP ONLY (never from 0.0.0.0/0)."
-    echo "  - HTTP Basic authentication is not encrypted without HTTPS; use a domain with MANAGER_DOMAIN or an SSH tunnel."
+    echo "  In a browser on your own computer, open:"
+    echo "    http://${host}:${WEB_PORT}/setup"
+    echo "  If it does not load, check that inbound TCP ${WEB_PORT} is allowed in"
+    echo "  your cloud firewall or forwarded by your router."
+    echo "  HTTP is for initial setup only. The final screen helps you enable HTTPS."
   fi
 fi
 

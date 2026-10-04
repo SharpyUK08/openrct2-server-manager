@@ -29,10 +29,11 @@ It may take several minutes and print lots of text. That is normal. Do not close
 the window. When it finishes, look for `OpenRCT2 Server Manager is ready` and
 save the numbered `NEXT STEP` section and one-time password.
 
-## 3. Allow OpenRCT2 players to connect
+## 3. Open the two required ports
 
-The server has numbered internet “doors” called ports. Players need door
-**11753** opened. The website and private control doors must stay closed.
+The server has numbered internet “doors” called ports. Players need TCP
+**11753**. Your browser needs TCP **8080** for the first-time setup page.
+The private control doors 11754 and 11755 must stay closed.
 
 For AWS Lightsail:
 
@@ -40,32 +41,33 @@ For AWS Lightsail:
 2. Choose **Networking**.
 3. Under **IPv4 Firewall**, choose **Add rule**.
 4. Choose **Custom**, then **TCP**, and enter `11753`.
-5. Save the rule.
+5. Save the rule, then add a second **Custom TCP** rule for `8080`.
 
 For other hosting:
 
 - **AWS EC2:** Security Groups → the instance's group → Edit inbound rules →
-  Custom TCP, port 11753.
+  add Custom TCP rules for ports 11753 and 8080.
 - **Azure, Google Cloud or another VPS:** find the VM's Firewall, Network,
-  Security Group or Inbound Rules and allow TCP 11753.
-- **A server at home:** forward TCP 11753 in the router to the Ubuntu machine's
-  private LAN address. Also allow TCP 11753 in Ubuntu's firewall if enabled.
+  Security Group or Inbound Rules and allow TCP 11753 and 8080.
+- **A server at home:** forward TCP 11753 and 8080 in the router to the Ubuntu
+  machine's private LAN address. Also allow both TCP ports in Ubuntu's firewall
+  if it is enabled.
 
-Do not add a UDP rule. Do not open ports 11754, 11755 or 8080 to everyone.
+Do not add UDP rules. Do not open ports 11754 or 11755.
 
-## 4. Open the private setup page
+## 4. Open the setup page
 
-The setup website is private at first. On your own computer—not inside the AWS
-terminal—open Terminal on macOS/Linux or PowerShell on Windows and paste the
-command printed by the installer. It looks like:
+At the end, the installer prints the exact address to open. It looks like:
 
-```bash
-ssh -L 8080:127.0.0.1:8080 ubuntu@YOUR_SERVER_IP
-```
+`http://YOUR_SERVER_IP:8080/setup`
 
-Keep that window open. In Chrome, visit <http://127.0.0.1:8080/>. Enter the
-one-time password and follow the five short setup sections. You will choose a
-new permanent password here.
+Open that address in Chrome or another browser on your computer. Enter the
+one-time password printed by the installer and follow the five short setup
+sections. You will choose a new permanent password here.
+
+Plain HTTP does not encrypt passwords. This direct IP page is intended to make
+the first setup easy. Complete it promptly, and do not share the address or
+one-time password. The last setup screen helps you add a domain and HTTPS.
 
 ## 5. Optional domain and HTTPS
 
@@ -77,8 +79,9 @@ It will give you one command like:
 sudo openrct2-manager-enable-https parks.example.com
 ```
 
-After HTTPS works, leave ports 8080, 11754 and 11755 closed publicly. Only TCP
-11753 for the game and TCP 80/443 for the manager should be internet-facing.
+After HTTPS works, close public port 8080 and leave 11754 and 11755 closed.
+Only TCP 11753 for the game and TCP 80/443 for the manager should be
+internet-facing.
 
 ## 6. Upload and launch a park
 
