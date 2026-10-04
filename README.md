@@ -28,7 +28,10 @@ server on Ubuntu. The current standalone v3 installer is
 Requirements are Ubuntu Server 22.04/24.04, systemd, sudo and a compatible park.
 OpenRCT2 does not need to be installed first: the installer detects an existing
 v0.5.5+ executable and, when none is found, installs the release build from the
-official OpenRCT2 Ubuntu PPA and verifies it before creating the services. Open
+official OpenRCT2 Ubuntu PPA. If Ubuntu's packaged build is older than the
+manager requires, it downloads the matching official GitHub release bundle,
+verifies its published SHA-256 checksum and installs it under `/opt/openrct2`.
+The executable and version are verified before services are created. Open
 TCP `11753` for players. For HTTPS, point a DNS name at the host and open TCP
 `80`/`443`; keep internal port `8080` private.
 

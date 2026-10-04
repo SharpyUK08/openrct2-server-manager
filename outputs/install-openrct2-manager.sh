@@ -162,6 +162,95 @@ find_openrct2() {
   return 1
 }
 
+openrct2_version_supported() {
+  local text=$1 major minor patch
+  if [[ $text =~ ([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
+    major=${BASH_REMATCH[1]}; minor=${BASH_REMATCH[2]}; patch=${BASH_REMATCH[3]}
+    (( major > 0 || minor > 5 || (minor == 5 && patch >= 5) ))
+  else
+    return 1
+  fi
+}
+
+release_stage=''
+cleanup_release_stage() {
+  if [[ ${release_stage:-} == /tmp/openrct2-release.* && -d $release_stage ]]; then
+    rm -rf -- "$release_stage"
+  fi
+}
+trap cleanup_release_stage EXIT
+
+install_openrct2_release_bundle() {
+  local architecture codename metadata asset_name asset_url checksum_url expected_sha target binary
+  architecture=$(dpkg --print-architecture)
+  if [[ $architecture != amd64 ]]; then
+    echo "The official OpenRCT2 release bundle is currently available only for amd64 (found: ${architecture})." >&2
+    echo "Install OpenRCT2 v0.5.5+ yourself and set OPENRCT2_BIN to its executable." >&2
+    return 1
+  fi
+  codename=${VERSION_CODENAME:-noble}
+  release_stage=$(mktemp -d /tmp/openrct2-release.XXXXXX)
+  metadata=$release_stage/release.json
+  echo "The Ubuntu package is too old; downloading the current official OpenRCT2 release bundle..."
+  curl -fsSL --retry 3 --connect-timeout 15 \
+    https://api.github.com/repos/OpenRCT2/OpenRCT2/releases/latest -o "$metadata"
+  mapfile -t release_details < <(python3 - "$metadata" "$codename" <<'PYRELEASE'
+import json, re, sys
+release = json.load(open(sys.argv[1], encoding='utf-8'))
+tag = str(release.get('tag_name', ''))
+if not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', tag):
+    raise SystemExit('The official release API returned an invalid version tag.')
+assets = release.get('assets', [])
+names = [f'-Linux-{sys.argv[2]}-x86_64.tar.gz', '-linux-x86_64.AppImage']
+selected = next((asset for suffix in names for asset in assets
+                 if str(asset.get('name', '')).endswith(suffix)), None)
+checksums = next((asset for asset in assets
+                  if str(asset.get('name', '')).endswith('-sha256sums.txt')), None)
+if not selected or not checksums:
+    raise SystemExit(f'No supported Linux bundle or checksum file was published for {tag}.')
+for value in (tag, selected['name'], selected['browser_download_url'], checksums['browser_download_url']):
+    print(value)
+PYRELEASE
+  )
+  if (( ${#release_details[@]} != 4 )); then
+    echo "Could not identify a supported asset in the official OpenRCT2 release." >&2
+    return 1
+  fi
+  OPENRCT2_RELEASE_TAG=${release_details[0]}
+  asset_name=${release_details[1]}
+  asset_url=${release_details[2]}
+  checksum_url=${release_details[3]}
+  for asset_url_check in "$asset_url" "$checksum_url"; do
+    [[ $asset_url_check == https://github.com/OpenRCT2/OpenRCT2/releases/download/* ]] || {
+      echo "The release API returned an unexpected download host." >&2; return 1;
+    }
+  done
+  curl -fL --retry 3 --connect-timeout 15 "$asset_url" -o "$release_stage/$asset_name"
+  curl -fsSL --retry 3 --connect-timeout 15 "$checksum_url" -o "$release_stage/sha256sums.txt"
+  expected_sha=$(awk -v name="$asset_name" '$2 == name || $2 == "./" name {print $1; exit}' "$release_stage/sha256sums.txt")
+  [[ $expected_sha =~ ^[0-9a-fA-F]{64}$ ]] || { echo "No SHA-256 was published for ${asset_name}." >&2; return 1; }
+  printf '%s  %s\n' "$expected_sha" "$release_stage/$asset_name" | sha256sum -c -
+  install -d -m 0755 /opt/openrct2/releases
+  target=/opt/openrct2/releases/$OPENRCT2_RELEASE_TAG
+  if [[ ! -d $target ]]; then
+    install -d -m 0755 "$release_stage/extracted"
+    if [[ $asset_name == *.tar.gz ]]; then
+      if tar -tzf "$release_stage/$asset_name" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+        echo "The OpenRCT2 archive contains an unsafe path." >&2; return 1
+      fi
+      tar -xzf "$release_stage/$asset_name" -C "$release_stage/extracted" --no-same-owner --no-same-permissions
+    else
+      chmod 0755 "$release_stage/$asset_name"
+      (cd "$release_stage/extracted" && "$release_stage/$asset_name" --appimage-extract >/dev/null)
+    fi
+    mv "$release_stage/extracted" "$target"
+  fi
+  binary=$(find "$target" -maxdepth 5 -type f \( -name openrct2-cli -o -name openrct2 \) -perm -0100 -print -quit)
+  [[ -n $binary ]] || { echo "The verified OpenRCT2 bundle contained no executable." >&2; return 1; }
+  ln -sfn "$binary" /opt/openrct2/openrct2-cli
+  OPENRCT2_BIN=/opt/openrct2/openrct2-cli
+}
+
 openrct2_was_installed=false
 if detected_openrct2=$(find_openrct2); then
   OPENRCT2_BIN=$detected_openrct2
@@ -191,17 +280,17 @@ else
   openrct2_was_installed=true
 fi
 version_line=$("$OPENRCT2_BIN" --version 2>/dev/null | head -n 1 || true)
-if [[ $version_line =~ ([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
-  version_major=${BASH_REMATCH[1]}
-  version_minor=${BASH_REMATCH[2]}
-  version_patch=${BASH_REMATCH[3]}
-  if (( version_major == 0 && (version_minor < 5 || (version_minor == 5 && version_patch < 5)) )); then
-    echo "OpenRCT2 v0.5.5 or newer is needed for the manager helper (found: $version_line)." >&2
+if ! openrct2_version_supported "$version_line"; then
+  if [[ $AUTO_INSTALL_OPENRCT2 == true ]]; then
+    echo "OpenRCT2 v0.5.5 or newer is required (found: ${version_line:-unknown})."
+    install_openrct2_release_bundle
+    openrct2_was_installed=true
+    version_line=$("$OPENRCT2_BIN" --version 2>/dev/null | head -n 1 || true)
+  fi
+  if ! openrct2_version_supported "$version_line"; then
+    echo "OpenRCT2 v0.5.5 or newer is needed for the manager helper (found: ${version_line:-unknown})." >&2
     exit 1
   fi
-else
-  echo "Could not verify the OpenRCT2 version: $version_line" >&2
-  exit 1
 fi
 if [[ $openrct2_was_installed == true ]]; then
   echo "Installed and verified ${version_line} at ${OPENRCT2_BIN}."

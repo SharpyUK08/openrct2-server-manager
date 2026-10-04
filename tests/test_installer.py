@@ -45,6 +45,13 @@ class InstallerTests(unittest.TestCase):
         self.assertLess(self.source.index('apt-get install -y --no-install-recommends openrct2'),
                         self.source.index('version_line=$("$OPENRCT2_BIN" --version'))
 
+    def test_old_ppa_package_falls_back_to_verified_official_release(self):
+        self.assertIn("https://api.github.com/repos/OpenRCT2/OpenRCT2/releases/latest", self.source)
+        self.assertIn("sha256sum -c -", self.source)
+        self.assertIn("The Ubuntu package is too old", self.source)
+        self.assertIn("tar -tzf", self.source)
+        self.assertIn("The OpenRCT2 archive contains an unsafe path", self.source)
+
 
 if __name__ == "__main__":
     unittest.main()
