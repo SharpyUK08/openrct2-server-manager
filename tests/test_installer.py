@@ -60,6 +60,12 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("Never expose TCP ${CONTROL_PORT}", self.source)
         self.assertIn("ssh -L ${WEB_PORT}:127.0.0.1:${WEB_PORT} ubuntu@${host}", self.source)
 
+    def test_repeated_incomplete_install_reissues_one_time_password(self):
+        self.assertIn("portal_user_count=$(python3", self.source)
+        self.assertIn("setup_token_issued=false", self.source)
+        self.assertIn("grep -q ':!browser-first-run-disabled!$'", self.source)
+        self.assertIn("if [[ $setup_token_issued == true ]]", self.source)
+
 
 if __name__ == "__main__":
     unittest.main()

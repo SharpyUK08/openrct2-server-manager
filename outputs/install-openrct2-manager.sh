@@ -4022,8 +4022,23 @@ registerPlugin({ name:"OpenRCT2 Manager Helper", version:"3.0.0", authors:["Open
 JSTEMPLATE
 chmod 0644 /usr/local/share/openrct2-manager/manager-helper.template.js
 
-if [[ $existing_server_env == false ]]; then
+setup_token_issued=false
+portal_user_count=$(python3 - <<'PYUSERS'
+import json
+try:
+    data = json.load(open('/var/lib/openrct2-manager/portal-users.json', encoding='utf-8'))
+    print(len(data.get('users', [])) if isinstance(data, dict) else 0)
+except (FileNotFoundError, OSError, ValueError):
+    print(0)
+PYUSERS
+)
+if [[ $existing_server_env == false ]] || \
+   { [[ $portal_user_count == 0 ]] && grep -q ':!browser-first-run-disabled!$' /etc/openrct2-manager/web-credentials; }; then
+  if [[ $existing_server_env == true ]]; then
+    WEB_PASSWORD=$(openssl rand -base64 24 | tr -d '\n')
+  fi
   printf '%s\n' "$WEB_PASSWORD" | runuser -u openrct2 -- /usr/bin/python3 /usr/local/lib/openrct2-manager.py --init-setup-token
+  setup_token_issued=true
 fi
 runuser -u openrct2 -- /usr/bin/python3 /usr/local/lib/openrct2-manager.py --setup
 
@@ -4184,7 +4199,7 @@ else
   fi
 fi
 
-if [[ $existing_server_env == false ]]; then
+if [[ $setup_token_issued == true ]]; then
   echo
   echo "NEXT STEP 3 - Create the first Owner"
   echo "  Suggested username: ${WEB_USER}"
